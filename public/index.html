@@ -101,6 +101,7 @@
   const readSet = new Set(JSON.parse(localStorage.getItem('bbsr_read') || '[]'));
   let boardHist = JSON.parse(localStorage.getItem('bbsr_boardHist') || '[]');  // [{host,board}] 新しい順
   let lastReadMap = JSON.parse(localStorage.getItem('bbsr_lastRead') || '{}'); // 'h/b/k' -> 最後に見たレス番号
+  let viewOrder = localStorage.getItem('bbsr_viewOrder') || 'num';  // 'num' | 'tree'
   function noteBoardVisit(b) {
     boardHist = boardHist.filter(x => !(x.host === b.host && x.board === b.board));
     boardHist.unshift({ host: b.host, board: b.board });
@@ -228,6 +229,31 @@
     }
     return { parents, children };
   }
+  function treeOrderOf(posts) {
+    // 返信を親の直下にぶら下げる並び順（深さ付き）。主親＝最初の有効アンカー
+    const rels = relationsOf(posts);
+    const byNum = new Map(posts.map(p => [p.num, p]));
+    const kids = new Map();
+    const hasParent = new Set();
+    for (const p of posts) {
+      const ps = rels.parents.get(p.num) || [];
+      if (ps.length && byNum.has(ps[0])) {
+        hasParent.add(p.num);
+        if (!kids.has(ps[0])) kids.set(ps[0], []);
+        kids.get(ps[0]).push(p.num);
+      }
+    }
+    const out = [], seen = new Set();
+    const visit = (num, depth) => {
+      if (seen.has(num) || !byNum.has(num)) return;
+      seen.add(num);
+      out.push({ p: byNum.get(num), depth });
+      for (const c of (kids.get(num) || [])) visit(c, depth + 1);
+    };
+    for (const p of posts) if (!hasParent.has(p.num)) visit(p.num, 0);
+    for (const p of posts) visit(p.num, 0);  // 保険（到達できない残り）
+    return out;
+  }
 
   function ddgImageProxy(u) {
     return 'https://external-content.duckduckgo.com/iu/?u=' + encodeURIComponent(u) + '&f=1&nofb=1';
@@ -292,14 +318,16 @@
       const hasNew = known > 0 && known < maxNum;
       let html = '<div id="threadHead"><span class="t">' + esc(title) + '</span>' + badge
                  + ' <button class="mini2" id="threadRefresh">↻ 更新</button>'
+                 + ' 表示 <select id="viewOrder"><option value="num"' + (viewOrder === 'num' ? ' selected' : '') + '>番号順</option><option value="tree"' + (viewOrder === 'tree' ? ' selected' : '') + '>ツリー順</option></select>'
                  + '<div class="status">' + data.posts.length + ' レス ／ ' + esc(host) + ' ／ ' + esc(board)
                  + (hasNew ? ' ／ 新着 ' + (maxNum - known) + ' 件' : '') + '</div></div>';
       // ID出現回数を数える
       const idCount = {};
       data.posts.forEach(p => { if (p.id) idCount[p.id] = (idCount[p.id] || 0) + 1; });
       const rels = optTree.checked ? relationsOf(data.posts) : { parents: new Map(), children: new Map() };
-      for (const p of data.posts) {
-        if (hasNew && p.num === known + 1) html += '<div class="newLine" id="newLine">―― ここから新しいレス ――</div>';
+      const ordered = viewOrder === 'tree' ? treeOrderOf(data.posts) : data.posts.map(p => ({ p, depth: 0 }));
+      for (const { p, depth } of ordered) {
+        if (viewOrder === 'num' && hasNew && p.num === known + 1) html += '<div class="newLine" id="newLine">―― ここから新しいレス ――</div>';
         let relsHtml = '';
         if (optTree.checked) {
           const ps = rels.parents.get(p.num) || [];
@@ -312,7 +340,9 @@
               + '</div>';
           }
         }
-        html += '<div class="post' + (p.num > known && known > 0 ? ' newpost' : '') + '" id="post' + p.num + '" data-id="' + esc(p.id) + '">'
+        const indent = viewOrder === 'tree' ? Math.min(depth, 8) : 0;
+        html += '<div class="post' + (indent > 0 ? ' child' : '') + (p.num > known && known > 0 ? ' newpost' : '') + '" id="post' + p.num + '" data-id="' + esc(p.id) + '"'
+          + (indent > 0 ? ' style="margin-left:' + (indent * 14) + 'px"' : '') + '>'
           + '<div class="head"><span class="num">' + p.num + '</span> '
           + '<span class="name">' + esc(p.name) + '</span> '
           + esc(p.date)
@@ -326,7 +356,7 @@
       localStorage.setItem('bbsr_lastRead', JSON.stringify(lastReadMap));
       postsPane.innerHTML = html;
       if (opts.toNewLine) {
-        const nl = document.getElementById('newLine');
+        const nl = document.getElementById('newLine') || postsPane.querySelector('.newpost');
         if (nl) { nl.scrollIntoView({ block: 'start' }); postsPane.scrollTop -= 70; }
         else postsPane.scrollTop = postsPane.scrollHeight;
       } else {
@@ -335,6 +365,8 @@
       applyFont();
       const trb = $('threadRefresh');
       if (trb) trb.onclick = () => openThread(host, board, key, { toNewLine: true });
+      const vos = $('viewOrder');
+      if (vos) vos.onchange = () => { viewOrder = vos.value; localStorage.setItem('bbsr_viewOrder', viewOrder); openThread(host, board, key); };
       postsPane.querySelectorAll('[data-anchor]').forEach(a => {
         a.addEventListener('click', (ev) => {
           ev.preventDefault();
