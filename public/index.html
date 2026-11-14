@@ -155,16 +155,35 @@
   function linkHref(u) { return u; }  // リンクは直接開く（rel=noreferrerで参照元は送らない）
   function renderBody(body) {
     let s = esc(body);
-    s = s.replace(/https?:\/\/[^\s<]+/g, (u) => {
-      const isImg = /\.(jpe?g|png|gif|webp|avif)([?#].*)?$/i.test(u.replace(/&amp;/g, '&'));
+    // まず専ブラ内で開けるスレURL（前スレ等）をトークン化する。
+    // https付き / ttps（h欠け）/ スキーム無しの裸URL、read.cgi形と kako・dat形に対応
+    const threadTokens = [];
+    const HOSTRE = '((?:[a-z0-9-]+\\.)+(?:5ch\\.net|5ch\\.io|bbspink\\.com)|bbs\\.eddibb\\.cc)';
+    const stash = (host, board, key, disp) => {
+      threadTokens.push({ host, board, key, disp });
+      return '\u0001' + (threadTokens.length - 1) + '\u0002';
+    };
+    s = s.replace(new RegExp('(?:https?:\\/\\/|ttps:\\/\\/)?' + HOSTRE + '\\/(?:[A-Za-z0-9_]+\\/)?test\\/read\\.cgi\\/([A-Za-z0-9_]+)\\/(\\d{9,10})(?:\\/[\\x21-\\x7E]*)?', 'gi'),
+      (m, host, board, key) => stash(host, board, key, m.replace(/[、。]+$/, '')));
+    s = s.replace(new RegExp('(?:https?:\\/\\/|ttps:\\/\\/)?' + HOSTRE + '\\/([A-Za-z0-9_]+)\\/(?:kako\\/(?:\\d+\\/\\d+\\/)?|dat\\/)(\\d{9,10})\\.dat', 'gi'),
+      (m, host, board, key) => stash(host, board, key, m));
+    s = s.replace(/(?:https?:\/\/|ttps:\/\/)[^\s<]+/g, (u) => {
+      const fixed = u.startsWith('ttps') ? 'h' + u : u;  // h欠けを補完
+      const isImg = /\.(jpe?g|png|gif|webp|avif)([?#].*)?$/i.test(fixed.replace(/&amp;/g, '&'));
       if (isImg && optThumb.checked) {
-        return '<a href="' + linkHref(u) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>'
-          + '<br><a href="' + linkHref(u) + '" target="_blank" rel="noopener noreferrer">'
-          + '<img loading="lazy" src="' + ddgImageProxy(u.replace(/&amp;/g, '&')) + '" alt="" '
+        return '<a href="' + linkHref(fixed) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>'
+          + '<br><a href="' + linkHref(fixed) + '" target="_blank" rel="noopener noreferrer">'
+          + '<img loading="lazy" src="' + ddgImageProxy(fixed.replace(/&amp;/g, '&')) + '" alt="" '
           + 'style="max-width:190px; max-height:190px; border-radius:8px; margin:4px 0;" '
           + 'onerror="this.style.display=\'none\'"></a>';
       }
-      return '<a href="' + linkHref(u) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>';
+      return '<a href="' + linkHref(fixed) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>';
+    });
+    // トークンを「専ブラ内で開く」リンクに戻す
+    s = s.replace(/\u0001(\d+)\u0002/g, (m, i) => {
+      const t = threadTokens[+i];
+      return '<a href="#" data-threadlink="' + t.host + '|' + t.board + '|' + t.key + '" title="専ブラ内で開く">'
+        + esc(t.disp) + ' <span style="font-size:11px;">（内）</span></a>';
     });
     s = s.replace(/&gt;&gt;(\d+)/g, '<a href="#" data-anchor="$1">&gt;&gt;$1</a>');
     return s;
@@ -204,6 +223,14 @@
             target.classList.add('flash');
             setTimeout(() => target.classList.remove('flash'), 1200);
           }
+        });
+      });
+      postsPane.querySelectorAll('[data-threadlink]').forEach(a => {
+        a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          const [h, b, k] = a.dataset.threadlink.split('|');
+          curBoard = { host: h, board: b, name: b };
+          openThread(h, b, k);
         });
       });
       postsPane.querySelectorAll('[data-hlid]').forEach(el => {
