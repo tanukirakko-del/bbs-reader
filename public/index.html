@@ -57,6 +57,7 @@
   <button id="openUrlBtn">開く</button>
   <button class="mini" id="fontDown">A-</button>
   <button class="mini" id="fontUp">A+</button>
+  <label style="font-size:13px;"><input type="checkbox" id="optThumb"> 🖼 サムネ（DDG経由）</label>
 </header>
 <div id="layout">
   <div class="pane" id="boardsPane">
@@ -144,9 +145,27 @@
   $('threadFilter').addEventListener('input', renderThreads);
 
   // ---------- スレ表示 ----------
+  const optThumb = $('optThumb');
+  optThumb.checked = localStorage.getItem('bbsr_thumb') !== '0';
+  optThumb.addEventListener('change', () => { localStorage.setItem('bbsr_thumb', optThumb.checked ? '1' : '0'); if (curThread) { const [h, b, k] = curThread.split('/'); openThread(h, b, k); } });
+
+  function ddgImageProxy(u) {
+    return 'https://external-content.duckduckgo.com/iu/?u=' + encodeURIComponent(u) + '&f=1&nofb=1';
+  }
+  function linkHref(u) { return u; }  // リンクは直接開く（rel=noreferrerで参照元は送らない）
   function renderBody(body) {
     let s = esc(body);
-    s = s.replace(/https?:\/\/[^\s<]+/g, (u) => '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a>');
+    s = s.replace(/https?:\/\/[^\s<]+/g, (u) => {
+      const isImg = /\.(jpe?g|png|gif|webp|avif)([?#].*)?$/i.test(u.replace(/&amp;/g, '&'));
+      if (isImg && optThumb.checked) {
+        return '<a href="' + linkHref(u) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>'
+          + '<br><a href="' + linkHref(u) + '" target="_blank" rel="noopener noreferrer">'
+          + '<img loading="lazy" src="' + ddgImageProxy(u.replace(/&amp;/g, '&')) + '" alt="" '
+          + 'style="max-width:190px; max-height:190px; border-radius:8px; margin:4px 0;" '
+          + 'onerror="this.style.display=\'none\'"></a>';
+      }
+      return '<a href="' + linkHref(u) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>';
+    });
     s = s.replace(/&gt;&gt;(\d+)/g, '<a href="#" data-anchor="$1">&gt;&gt;$1</a>');
     return s;
   }
