@@ -11,7 +11,14 @@ const path = require('path');
 const PORT = 8787;
 const HOST = '127.0.0.1';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36';
-const ALLOWED_HOST = /\.(5ch\.net|5ch\.io|bbspink\.com)$/i;
+const ALLOWED_HOST = /(^|\.)(5ch\.net|5ch\.io|bbspink\.com|eddibb\.cc)$/i;
+
+// 5chメニューに載っていない、手動追加の板
+const EXTRA_CATEGORIES = [
+  { category: '追加の掲示板', boards: [
+    { name: 'エッヂ liveedge', host: 'bbs.eddibb.cc', board: 'liveedge' },
+  ] },
+];
 
 const sjis = new TextDecoder('shift_jis');
 
@@ -56,6 +63,7 @@ async function getBoards() {
     }
   }
   const data = cats.filter(c => c.boards.length > 0);
+  for (const extra of EXTRA_CATEGORIES) data.push(extra);
   boardsCache = { at: Date.now(), data };
   return data;
 }
