@@ -1,5 +1,5 @@
 @echo off
 cd /d %~dp0
-start "" /min powershell -NoProfile -ExecutionPolicy Bypass -File open-ddg.ps1
-node server.js
-pause
+start /min node server.js
+powershell -NoProfile -ExecutionPolicy Bypass -File open-ddg.ps1
+exit
