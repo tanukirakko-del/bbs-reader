@@ -292,9 +292,9 @@
       const depths = optTree.checked ? treeDepths(data.posts) : new Map();
       for (const p of data.posts) {
         if (hasNew && p.num === known + 1) html += '<div class="newLine" id="newLine">―― ここから新しいレス ――</div>';
-        const dep = Math.min(depths.get(p.num) || 0, 5);
+        const dep = Math.min(depths.get(p.num) || 0, 2);  // 深い鎖でも最大2段まで（ズレて見えるのを防ぐ）
         html += '<div class="post' + (dep > 0 ? ' child' : '') + (p.num > known && known > 0 ? ' newpost' : '') + '" id="post' + p.num + '" data-id="' + esc(p.id) + '"'
-          + (dep > 0 ? ' style="margin-left:' + (dep * 16) + 'px"' : '') + '>'
+          + (dep > 0 ? ' style="margin-left:' + (dep * 18) + 'px"' : '') + '>'
           + '<div class="head"><span class="num">' + p.num + '</span> '
           + '<span class="name">' + esc(p.name) + '</span> '
           + esc(p.date)
