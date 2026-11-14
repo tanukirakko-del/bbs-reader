@@ -123,10 +123,18 @@ async function getThread(host, board, key) {
     const txt = await fetchText(`https://${host}/${board}/dat/${key}.dat`);
     return { source: 'live', posts: parseDat(txt) };
   } catch (e) { /* 過去ログへ */ }
-  // 過去ログ（kako）の標準パス
+  // 過去ログ（kako）：階層パス → フラットパスの順に探す
   const k4 = key.slice(0, 4), k5 = key.slice(0, 5);
-  const txt = await fetchText(`https://${host}/${board}/kako/${k4}/${k5}/${key}.dat`);
-  return { source: 'kako', posts: parseDat(txt) };
+  const kakoUrls = [
+    `https://${host}/${board}/kako/${k4}/${k5}/${key}.dat`,
+    `https://${host}/${board}/kako/${key}.dat`,
+  ];
+  let lastErr = null;
+  for (const u of kakoUrls) {
+    try { return { source: 'kako', posts: parseDat(await fetchText(u)) }; }
+    catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('過去ログが見つかりませんでした');
 }
 
 // ---------- HTTP サーバー ----------
