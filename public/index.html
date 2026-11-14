@@ -38,6 +38,12 @@
   .post .body { white-space:pre-wrap; word-break:break-word; line-height:1.65; }
   .post .body a { color:#1a5fb4; }
   .post.sameId { outline:2px solid #f4a261; outline-offset:-2px; }
+  .post.child { border-left:3px solid #b7d3ac; }
+  .post.newpost { background:#fffbe8; }
+  .newLine { background:#ffe9a8; color:#7a5b00; font-size:12px; font-weight:bold; padding:4px 10px; border-top:2px solid #e6c34a; border-bottom:2px solid #e6c34a; }
+  #threadSort { padding:6px; border:1px solid #c9c2ae; border-radius:6px; font-size:13px; background:#fff; }
+  .mini2 { padding:5px 12px; border:1px solid #c9c2ae; border-radius:6px; background:#fff; cursor:pointer; font-size:13px; }
+  .mini2:hover { background:#f0ecd9; }
   #threadHead { padding:10px 12px; border-bottom:2px solid #d8d2c4; background:#fdfaf0; position:sticky; top:-8px; }
   #threadHead .t { font-size:17px; font-weight:bold; }
   .badge { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; background:#40916c; color:#fff; margin-left:8px; vertical-align:middle; }
@@ -58,6 +64,7 @@
   <button class="mini" id="fontDown">A-</button>
   <button class="mini" id="fontUp">A+</button>
   <label style="font-size:13px;"><input type="checkbox" id="optThumb"> 🖼 サムネ（DDG経由）</label>
+  <label style="font-size:13px;"><input type="checkbox" id="optTree"> 🌲 ツリー表示</label>
 </header>
 <div id="layout">
   <div class="pane" id="boardsPane">
@@ -66,12 +73,15 @@
   </div>
   <div class="pane" id="threadsPane">
     <input type="text" id="threadFilter" placeholder="スレタイを検索">
-    <select id="threadSort" title="スレの並び順">
-      <option value="ikioi">勢い順</option>
-      <option value="standard">標準順（板の並び）</option>
-      <option value="count">レス数順</option>
-      <option value="new">新しい順</option>
-    </select>
+    <div style="display:flex; gap:6px; margin-bottom:8px;">
+      <select id="threadSort" title="スレの並び順" style="flex:1;">
+        <option value="ikioi">勢い順</option>
+        <option value="standard">標準順（板の並び）</option>
+        <option value="count">レス数順</option>
+        <option value="new">新しい順</option>
+      </select>
+      <button class="mini2" id="threadsRefresh" title="スレ一覧を更新">↻ 更新</button>
+    </div>
     <div id="threadsList"><div class="status">← 板を選んでね</div></div>
   </div>
   <div class="pane" id="postsPane">
@@ -86,6 +96,18 @@
   let boardsData = [], curBoard = null, threadsData = [], curThread = null;
   let fontSize = parseInt(localStorage.getItem('bbsr_font') || '15', 10);
   const readSet = new Set(JSON.parse(localStorage.getItem('bbsr_read') || '[]'));
+  let boardHist = JSON.parse(localStorage.getItem('bbsr_boardHist') || '[]');  // [{host,board}] 新しい順
+  let lastReadMap = JSON.parse(localStorage.getItem('bbsr_lastRead') || '{}'); // 'h/b/k' -> 最後に見たレス番号
+  function noteBoardVisit(b) {
+    boardHist = boardHist.filter(x => !(x.host === b.host && x.board === b.board));
+    boardHist.unshift({ host: b.host, board: b.board });
+    boardHist = boardHist.slice(0, 20);
+    localStorage.setItem('bbsr_boardHist', JSON.stringify(boardHist));
+  }
+  function boardNameOf(host, board) {
+    for (const cat of boardsData) for (const b of cat.boards) if (b.host === host && b.board === board) return b.name;
+    return board;
+  }
 
   function esc(s) {
     return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -104,6 +126,19 @@
   function renderBoards() {
     const q = $('boardFilter').value.trim();
     boardsList.innerHTML = '';
+    if (!q && boardHist.length) {
+      const c = document.createElement('div');
+      c.className = 'catName'; c.textContent = '★ 最近開いた板';
+      boardsList.appendChild(c);
+      for (const h of boardHist) {
+        const b = { host: h.host, board: h.board, name: boardNameOf(h.host, h.board) };
+        const d = document.createElement('div');
+        d.className = 'boardItem' + (curBoard && curBoard.host === b.host && curBoard.board === b.board ? ' active' : '');
+        d.textContent = b.name;
+        d.onclick = () => { curBoard = b; noteBoardVisit(b); renderBoards(); loadThreads(); };
+        boardsList.appendChild(d);
+      }
+    }
     for (const cat of boardsData) {
       const items = cat.boards.filter(b => !q || b.name.includes(q));
       if (!items.length) continue;
@@ -114,7 +149,7 @@
         const d = document.createElement('div');
         d.className = 'boardItem' + (curBoard && curBoard.host === b.host && curBoard.board === b.board ? ' active' : '');
         d.textContent = b.name;
-        d.onclick = () => { curBoard = b; renderBoards(); loadThreads(); };
+        d.onclick = () => { curBoard = b; noteBoardVisit(b); renderBoards(); loadThreads(); };
         boardsList.appendChild(d);
       }
     }
@@ -162,11 +197,29 @@
   $('threadFilter').addEventListener('input', renderThreads);
   $('threadSort').value = localStorage.getItem('bbsr_sort') || 'ikioi';
   $('threadSort').addEventListener('change', () => { localStorage.setItem('bbsr_sort', $('threadSort').value); renderThreads(); });
+  $('threadsRefresh').onclick = () => { if (curBoard) loadThreads(); };
 
   // ---------- スレ表示 ----------
   const optThumb = $('optThumb');
   optThumb.checked = localStorage.getItem('bbsr_thumb') !== '0';
   optThumb.addEventListener('change', () => { localStorage.setItem('bbsr_thumb', optThumb.checked ? '1' : '0'); if (curThread) { const [h, b, k] = curThread.split('/'); openThread(h, b, k); } });
+  const optTree = $('optTree');
+  optTree.checked = localStorage.getItem('bbsr_tree') !== '0';
+  optTree.addEventListener('change', () => { localStorage.setItem('bbsr_tree', optTree.checked ? '1' : '0'); if (curThread) { const [h, b, k] = curThread.split('/'); openThread(h, b, k); } });
+  function treeDepths(posts) {
+    // 最初の >>アンカー（自分より前）を親とみなす簡易ツリー
+    const depth = new Map();
+    for (const p of posts) {
+      let d = 0;
+      const m = String(p.body || '').match(/[>＞]{2}(\d+)/);
+      if (m) {
+        const parent = parseInt(m[1], 10);
+        if (parent >= 1 && parent < p.num && depth.has(parent)) d = depth.get(parent) + 1;
+      }
+      depth.set(p.num, Math.min(d, 8));
+    }
+    return depth;
+  }
 
   function ddgImageProxy(u) {
     return 'https://external-content.duckduckgo.com/iu/?u=' + encodeURIComponent(u) + '&f=1&nofb=1';
@@ -188,6 +241,15 @@
       (m, host, board, key) => stash(host, board, key, m));
     s = s.replace(/(?:https?:\/\/|ttps:\/\/)[^\s<]+/g, (u) => {
       const fixed = u.startsWith('ttps') ? 'h' + u : u;  // h欠けを補完
+      const yt = fixed.replace(/&amp;/g, '&').match(/(?:youtube\.com\/(?:watch\?[^ \t]*v=|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{6,})/);
+      if (yt && optThumb.checked) {
+        const thumb = 'https://i.ytimg.com/vi/' + yt[1] + '/hqdefault.jpg';
+        return '<a href="' + linkHref(fixed) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>'
+          + '<br><a href="' + linkHref(fixed) + '" target="_blank" rel="noopener noreferrer">'
+          + '<img loading="lazy" src="' + ddgImageProxy(thumb) + '" alt="" '
+          + 'style="max-width:240px; max-height:180px; border-radius:8px; margin:4px 0;" '
+          + 'onerror="this.style.display=\'none\'"></a>';
+      }
       const isImg = /\.(jpe?g|png|gif|webp|avif)([?#].*)?$/i.test(fixed.replace(/&amp;/g, '&'));
       if (isImg && optThumb.checked) {
         return '<a href="' + linkHref(fixed) + '" target="_blank" rel="noopener noreferrer">' + u + '</a>'
@@ -207,7 +269,7 @@
     s = s.replace(/&gt;&gt;(\d+)/g, '<a href="#" data-anchor="$1">&gt;&gt;$1</a>');
     return s;
   }
-  async function openThread(host, board, key) {
+  async function openThread(host, board, key, opts = {}) {
     curThread = host + '/' + board + '/' + key;
     readSet.add(curThread);
     localStorage.setItem('bbsr_read', JSON.stringify([...readSet].slice(-500)));
@@ -217,22 +279,44 @@
       const data = await api(`/api/thread?host=${encodeURIComponent(host)}&board=${encodeURIComponent(board)}&key=${encodeURIComponent(key)}`);
       const title = (data.posts[0] && data.posts[0].title) || '(タイトル不明)';
       const badge = data.source === 'kako' ? '<span class="badge kako">過去ログ</span>' : '<span class="badge">現行スレ</span>';
-      let html = '<div id="threadHead"><span class="t">' + esc(title) + '</span>' + badge +
-                 '<div class="status">' + data.posts.length + ' レス ／ ' + esc(host) + ' ／ ' + esc(board) + '</div></div>';
+      const maxNum = data.posts.length ? data.posts[data.posts.length - 1].num : 0;
+      const known = lastReadMap[curThread] || 0;   // 前回見たのはここまで
+      const hasNew = known > 0 && known < maxNum;
+      let html = '<div id="threadHead"><span class="t">' + esc(title) + '</span>' + badge
+                 + ' <button class="mini2" id="threadRefresh">↻ 更新</button>'
+                 + '<div class="status">' + data.posts.length + ' レス ／ ' + esc(host) + ' ／ ' + esc(board)
+                 + (hasNew ? ' ／ 新着 ' + (maxNum - known) + ' 件' : '') + '</div></div>';
       // ID出現回数を数える
       const idCount = {};
       data.posts.forEach(p => { if (p.id) idCount[p.id] = (idCount[p.id] || 0) + 1; });
+      const depths = optTree.checked ? treeDepths(data.posts) : new Map();
       for (const p of data.posts) {
-        html += '<div class="post" id="post' + p.num + '" data-id="' + esc(p.id) + '">'
+        if (hasNew && p.num === known + 1) html += '<div class="newLine" id="newLine">―― ここから新しいレス ――</div>';
+        const dep = Math.min(depths.get(p.num) || 0, 5);
+        html += '<div class="post' + (dep > 0 ? ' child' : '') + (p.num > known && known > 0 ? ' newpost' : '') + '" id="post' + p.num + '" data-id="' + esc(p.id) + '"'
+          + (dep > 0 ? ' style="margin-left:' + (dep * 16) + 'px"' : '') + '>'
           + '<div class="head"><span class="num">' + p.num + '</span> '
           + '<span class="name">' + esc(p.name) + '</span> '
           + esc(p.date)
           + (p.id ? ' <span class="id" data-hlid="' + esc(p.id) + '">ID:' + esc(p.id) + (idCount[p.id] > 1 ? ' (' + idCount[p.id] + ')' : '') + '</span>' : '')
           + '</div><div class="body">' + renderBody(p.body) + '</div></div>';
       }
+      // 既読ラインを最新まで進める（次回はこの先が「新しいレス」になる）
+      lastReadMap[curThread] = maxNum;
+      const entries = Object.entries(lastReadMap);
+      if (entries.length > 300) lastReadMap = Object.fromEntries(entries.slice(-300));
+      localStorage.setItem('bbsr_lastRead', JSON.stringify(lastReadMap));
       postsPane.innerHTML = html;
-      postsPane.scrollTop = 0;
+      if (opts.toNewLine) {
+        const nl = document.getElementById('newLine');
+        if (nl) { nl.scrollIntoView({ block: 'start' }); postsPane.scrollTop -= 70; }
+        else postsPane.scrollTop = postsPane.scrollHeight;
+      } else {
+        postsPane.scrollTop = 0;
+      }
       applyFont();
+      const trb = $('threadRefresh');
+      if (trb) trb.onclick = () => openThread(host, board, key, { toNewLine: true });
       postsPane.querySelectorAll('[data-anchor]').forEach(a => {
         a.addEventListener('click', (ev) => {
           ev.preventDefault();
@@ -249,6 +333,8 @@
           ev.preventDefault();
           const [h, b, k] = a.dataset.threadlink.split('|');
           curBoard = { host: h, board: b, name: b };
+          noteBoardVisit(curBoard);
+          renderBoards();
           openThread(h, b, k);
         });
       });
@@ -274,6 +360,8 @@
               v.match(/\/([A-Za-z0-9_]+)\/dat\/(\d{6,})\.dat/);                    // 現行 .dat 直URL
     if (!m || !host) { alert('対応するURLの形式じゃないみたいです（read.cgi のスレURLか、kako の .dat URLを貼ってください）'); return; }
     curBoard = { host: host, board: m[1], name: m[1] };
+    noteBoardVisit(curBoard);
+    renderBoards();
     openThread(host, m[1], m[2]);
   }
   $('openUrlBtn').onclick = openFromUrl;
