@@ -66,6 +66,12 @@
   </div>
   <div class="pane" id="threadsPane">
     <input type="text" id="threadFilter" placeholder="スレタイを検索">
+    <select id="threadSort" title="スレの並び順">
+      <option value="ikioi">勢い順</option>
+      <option value="standard">標準順（板の並び）</option>
+      <option value="count">レス数順</option>
+      <option value="new">新しい順</option>
+    </select>
     <div id="threadsList"><div class="status">← 板を選んでね</div></div>
   </div>
   <div class="pane" id="postsPane">
@@ -126,16 +132,27 @@
       threadsList.innerHTML = '<div class="status err">読み込めませんでした：' + esc(e.message) + '</div>';
     }
   }
+  function ikioiOf(t) {
+    // 勢い = 1日あたりのレス数（スレ立て時刻＝キーのUNIX時刻から計算）
+    const days = Math.max((Date.now() / 1000 - parseInt(t.key, 10)) / 86400, 1 / 24);
+    return t.count / days;
+  }
   function renderThreads() {
     const q = $('threadFilter').value.trim();
     threadsList.innerHTML = '';
     const items = threadsData.filter(t => !q || t.title.includes(q));
+    const mode = $('threadSort').value;
+    if (mode === 'ikioi') items.sort((a, b) => ikioiOf(b) - ikioiOf(a));
+    else if (mode === 'count') items.sort((a, b) => b.count - a.count);
+    else if (mode === 'new') items.sort((a, b) => parseInt(b.key, 10) - parseInt(a.key, 10));
     const frag = document.createDocumentFragment();
     for (const t of items) {
       const d = document.createElement('div');
       const key = curBoard.host + '/' + curBoard.board + '/' + t.key;
       d.className = 'threadItem' + (readSet.has(key) ? ' read' : '') + (curThread === key ? ' active' : '');
-      d.innerHTML = '<span class="tTitle">' + esc(t.title) + '</span> <span class="cnt">(' + t.count + ')</span>';
+      const ik = ikioiOf(t);
+      const ikTxt = ik >= 100 ? Math.round(ik).toString() : ik.toFixed(1);
+      d.innerHTML = '<span class="tTitle">' + esc(t.title) + '</span> <span class="cnt">(' + t.count + ') 勢い:' + ikTxt + '</span>';
       d.onclick = () => openThread(curBoard.host, curBoard.board, t.key);
       frag.appendChild(d);
     }
@@ -143,6 +160,8 @@
     if (!items.length) threadsList.innerHTML = '<div class="status">スレがありません</div>';
   }
   $('threadFilter').addEventListener('input', renderThreads);
+  $('threadSort').value = localStorage.getItem('bbsr_sort') || 'ikioi';
+  $('threadSort').addEventListener('change', () => { localStorage.setItem('bbsr_sort', $('threadSort').value); renderThreads(); });
 
   // ---------- スレ表示 ----------
   const optThumb = $('optThumb');
