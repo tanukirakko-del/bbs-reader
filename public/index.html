@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>専用ブラウザ（読み取り専用）</title>
+<style>
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; font-family:"Hiragino Sans","Noto Sans JP",sans-serif; background:#f4f1ea; color:#222; }
+  header { display:flex; gap:8px; align-items:center; padding:8px 12px; background:#2d3a2e; color:#fff; flex-wrap:wrap; }
+  header .appTitle { font-weight:bold; font-size:16px; margin-right:4px; }
+  header input[type=text] { flex:1; min-width:220px; padding:7px 10px; border-radius:6px; border:none; font-size:14px; }
+  header button { padding:7px 14px; border:none; border-radius:6px; background:#74c69d; font-weight:bold; cursor:pointer; font-size:14px; }
+  header .mini { background:#55685a; color:#fff; font-weight:normal; }
+  #layout { display:flex; height:calc(100% - 49px); }
+  .pane { overflow-y:auto; padding:8px; }
+  #boardsPane { width:220px; border-right:1px solid #d8d2c4; background:#eceae2; flex-shrink:0; }
+  #threadsPane { width:340px; border-right:1px solid #d8d2c4; background:#f8f6f0; flex-shrink:0; display:flex; flex-direction:column; }
+  #postsPane { flex:1; background:#fffef9; }
+  .pane input[type=text] { width:100%; padding:6px 9px; border:1px solid #c9c2ae; border-radius:6px; margin-bottom:8px; font-size:14px; }
+  .catName { font-weight:bold; margin:10px 2px 4px; color:#2d6a4f; font-size:13px; }
+  .boardItem { padding:5px 8px; border-radius:6px; cursor:pointer; font-size:14px; }
+  .boardItem:hover { background:#dde8d8; }
+  .boardItem.active { background:#b7d3ac; font-weight:bold; }
+  .threadItem { padding:7px 8px; border-bottom:1px solid #e5e0d0; cursor:pointer; font-size:14px; line-height:1.45; }
+  .threadItem:hover { background:#f0ecd9; }
+  .threadItem.active { background:#fdf3c9; }
+  .threadItem.read .tTitle { color:#999; }
+  .threadItem .meta { color:#888; font-size:12px; }
+  .threadItem .cnt { color:#c0392b; font-weight:bold; font-size:12px; }
+  #threadsList { overflow-y:auto; flex:1; }
+  .post { padding:8px 10px; border-bottom:1px solid #eee6d2; font-size:15px; }
+  .post:target, .post.flash { background:#fff3b0; }
+  .post .head { font-size:13px; color:#555; margin-bottom:3px; }
+  .post .num { font-weight:bold; color:#2d6a4f; }
+  .post .name { color:#117743; font-weight:bold; }
+  .post .id { color:#888; cursor:pointer; text-decoration:underline dotted; }
+  .post .body { white-space:pre-wrap; word-break:break-word; line-height:1.65; }
+  .post .body a { color:#1a5fb4; }
+  .post.sameId { outline:2px solid #f4a261; outline-offset:-2px; }
+  #threadHead { padding:10px 12px; border-bottom:2px solid #d8d2c4; background:#fdfaf0; position:sticky; top:-8px; }
+  #threadHead .t { font-size:17px; font-weight:bold; }
+  .badge { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px; background:#40916c; color:#fff; margin-left:8px; vertical-align:middle; }
+  .badge.kako { background:#8d6e63; }
+  .status { color:#888; font-size:13px; padding:10px 4px; }
+  .err { color:#c0392b; }
+  @media (max-width: 900px) {
+    #layout { flex-direction:column; height:auto; }
+    #boardsPane, #threadsPane { width:100%; max-height:38vh; border-right:none; border-bottom:1px solid #d8d2c4; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="appTitle">📖 専用ブラウザ</span>
+  <input type="text" id="urlInput" placeholder="スレURLを貼り付け（例：https://asahi.5ch.io/newsplus/test/read.cgi/newsplus/1794…/）">
+  <button id="openUrlBtn">開く</button>
+  <button class="mini" id="fontDown">A-</button>
+  <button class="mini" id="fontUp">A+</button>
+</header>
+<div id="layout">
+  <div class="pane" id="boardsPane">
+    <input type="text" id="boardFilter" placeholder="板を検索">
+    <div id="boardsList"><div class="status">読み込み中…</div></div>
+  </div>
+  <div class="pane" id="threadsPane">
+    <input type="text" id="threadFilter" placeholder="スレタイを検索">
+    <div id="threadsList"><div class="status">← 板を選んでね</div></div>
+  </div>
+  <div class="pane" id="postsPane">
+    <div class="status">スレを選ぶとここに表示されます。過去ログも自動で探します。</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const boardsList = $('boardsList'), threadsList = $('threadsList'), postsPane = $('postsPane');
+  let boardsData = [], curBoard = null, threadsData = [], curThread = null;
+  let fontSize = parseInt(localStorage.getItem('bbsr_font') || '15', 10);
+  const readSet = new Set(JSON.parse(localStorage.getItem('bbsr_read') || '[]'));
+
+  function esc(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+  async function api(path) {
+    const r = await fetch(path);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'エラー');
+    return j;
+  }
+  function applyFont() { postsPane.style.fontSize = fontSize + 'px'; document.querySelectorAll('.post').forEach(p => p.style.fontSize = fontSize + 'px'); }
+  $('fontUp').onclick = () => { fontSize = Math.min(22, fontSize + 1); localStorage.setItem('bbsr_font', fontSize); applyFont(); };
+  $('fontDown').onclick = () => { fontSize = Math.max(12, fontSize - 1); localStorage.setItem('bbsr_font', fontSize); applyFont(); };
+
+  // ---------- 板一覧 ----------
+  function renderBoards() {
+    const q = $('boardFilter').value.trim();
+    boardsList.innerHTML = '';
+    for (const cat of boardsData) {
+      const items = cat.boards.filter(b => !q || b.name.includes(q));
+      if (!items.length) continue;
+      const c = document.createElement('div');
+      c.className = 'catName'; c.textContent = cat.category;
+      boardsList.appendChild(c);
+      for (const b of items) {
+        const d = document.createElement('div');
+        d.className = 'boardItem' + (curBoard && curBoard.host === b.host && curBoard.board === b.board ? ' active' : '');
+        d.textContent = b.name;
+        d.onclick = () => { curBoard = b; renderBoards(); loadThreads(); };
+        boardsList.appendChild(d);
+      }
+    }
+    if (!boardsList.children.length) boardsList.innerHTML = '<div class="status">見つかりません</div>';
+  }
+  $('boardFilter').addEventListener('input', renderBoards);
+
+  // ---------- スレ一覧 ----------
+  async function loadThreads() {
+    threadsList.innerHTML = '<div class="status">読み込み中…</div>';
+    try {
+      threadsData = await api(`/api/subject?host=${encodeURIComponent(curBoard.host)}&board=${encodeURIComponent(curBoard.board)}`);
+      renderThreads();
+    } catch (e) {
+      threadsList.innerHTML = '<div class="status err">読み込めませんでした：' + esc(e.message) + '</div>';
+    }
+  }
+  function renderThreads() {
+    const q = $('threadFilter').value.trim();
+    threadsList.innerHTML = '';
+    const items = threadsData.filter(t => !q || t.title.includes(q));
+    const frag = document.createDocumentFragment();
+    for (const t of items) {
+      const d = document.createElement('div');
+      const key = curBoard.host + '/' + curBoard.board + '/' + t.key;
+      d.className = 'threadItem' + (readSet.has(key) ? ' read' : '') + (curThread === key ? ' active' : '');
+      d.innerHTML = '<span class="tTitle">' + esc(t.title) + '</span> <span class="cnt">(' + t.count + ')</span>';
+      d.onclick = () => openThread(curBoard.host, curBoard.board, t.key);
+      frag.appendChild(d);
+    }
+    threadsList.appendChild(frag);
+    if (!items.length) threadsList.innerHTML = '<div class="status">スレがありません</div>';
+  }
+  $('threadFilter').addEventListener('input', renderThreads);
+
+  // ---------- スレ表示 ----------
+  function renderBody(body) {
+    let s = esc(body);
+    s = s.replace(/https?:\/\/[^\s<]+/g, (u) => '<a href="' + u + '" target="_blank" rel="noopener noreferrer">' + u + '</a>');
+    s = s.replace(/&gt;&gt;(\d+)/g, '<a href="#" data-anchor="$1">&gt;&gt;$1</a>');
+    return s;
+  }
+  async function openThread(host, board, key) {
+    curThread = host + '/' + board + '/' + key;
+    readSet.add(curThread);
+    localStorage.setItem('bbsr_read', JSON.stringify([...readSet].slice(-500)));
+    renderThreads();
+    postsPane.innerHTML = '<div class="status">読み込み中…（現行スレ → 過去ログの順に探します）</div>';
+    try {
+      const data = await api(`/api/thread?host=${encodeURIComponent(host)}&board=${encodeURIComponent(board)}&key=${encodeURIComponent(key)}`);
+      const title = (data.posts[0] && data.posts[0].title) || '(タイトル不明)';
+      const badge = data.source === 'kako' ? '<span class="badge kako">過去ログ</span>' : '<span class="badge">現行スレ</span>';
+      let html = '<div id="threadHead"><span class="t">' + esc(title) + '</span>' + badge +
+                 '<div class="status">' + data.posts.length + ' レス ／ ' + esc(host) + ' ／ ' + esc(board) + '</div></div>';
+      // ID出現回数を数える
+      const idCount = {};
+      data.posts.forEach(p => { if (p.id) idCount[p.id] = (idCount[p.id] || 0) + 1; });
+      for (const p of data.posts) {
+        html += '<div class="post" id="post' + p.num + '" data-id="' + esc(p.id) + '">'
+          + '<div class="head"><span class="num">' + p.num + '</span> '
+          + '<span class="name">' + esc(p.name) + '</span> '
+          + esc(p.date)
+          + (p.id ? ' <span class="id" data-hlid="' + esc(p.id) + '">ID:' + esc(p.id) + (idCount[p.id] > 1 ? ' (' + idCount[p.id] + ')' : '') + '</span>' : '')
+          + '</div><div class="body">' + renderBody(p.body) + '</div></div>';
+      }
+      postsPane.innerHTML = html;
+      postsPane.scrollTop = 0;
+      applyFont();
+      postsPane.querySelectorAll('[data-anchor]').forEach(a => {
+        a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          const target = document.getElementById('post' + a.dataset.anchor);
+          if (target) {
+            target.scrollIntoView({ block: 'center' });
+            target.classList.add('flash');
+            setTimeout(() => target.classList.remove('flash'), 1200);
+          }
+        });
+      });
+      postsPane.querySelectorAll('[data-hlid]').forEach(el => {
+        el.addEventListener('click', () => {
+          const id = el.dataset.hlid;
+          postsPane.querySelectorAll('.post').forEach(p => p.classList.toggle('sameId', p.dataset.id === id));
+        });
+      });
+    } catch (e) {
+      postsPane.innerHTML = '<div class="status err">開けませんでした：' + esc(e.message) + '<br>現行スレにも過去ログにも見つかりませんでした。</div>';
+    }
+  }
+
+  // ---------- URL貼り付け ----------
+  function openFromUrl() {
+    const v = $('urlInput').value.trim();
+    const m = v.match(/https?:\/\/([^/]+)\/([^/]+)\/test\/read\.cgi\/[^/]+\/(\d{9,10})/) ||
+              v.match(/https?:\/\/([^/]+)\/([^/]+)\/dat\/(\d{9,10})\.dat/);
+    if (!m) { alert('対応するURLの形式じゃないみたいです（read.cgi のスレURLを貼ってください）'); return; }
+    curBoard = { host: m[1], board: m[2], name: m[2] };
+    openThread(m[1], m[2], m[3]);
+  }
+  $('openUrlBtn').onclick = openFromUrl;
+  $('urlInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') openFromUrl(); });
+
+  // ---------- 起動 ----------
+  (async () => {
+    try {
+      boardsData = await api('/api/boards');
+      renderBoards();
+    } catch (e) {
+      boardsList.innerHTML = '<div class="status err">板一覧が取れませんでした：' + esc(e.message) + '</div>';
+    }
+  })();
+})();
+</script>
+</body>
+</html>
