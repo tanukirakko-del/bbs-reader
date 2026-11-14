@@ -39,6 +39,9 @@
   .post .body a { color:#1a5fb4; }
   .post.sameId { outline:2px solid #f4a261; outline-offset:-2px; }
   .post.child { border-left:3px solid #b7d3ac; }
+  .rels { margin:2px 0 4px; }
+  .relchip { display:inline-block; font-size:11px; background:#eef3e6; border:1px solid #cfe0c8; border-radius:999px; padding:1px 8px; margin:0 4px 2px 0; color:#2d6a4f; text-decoration:none; cursor:pointer; }
+  .relchip:hover { background:#dde8d8; }
   .post.newpost { background:#fffbe8; }
   .newLine { background:#ffe9a8; color:#7a5b00; font-size:12px; font-weight:bold; padding:4px 10px; border-top:2px solid #e6c34a; border-bottom:2px solid #e6c34a; }
   #threadSort { padding:6px; border:1px solid #c9c2ae; border-radius:6px; font-size:13px; background:#fff; }
@@ -64,7 +67,7 @@
   <button class="mini" id="fontDown">A-</button>
   <button class="mini" id="fontUp">A+</button>
   <label style="font-size:13px;"><input type="checkbox" id="optThumb"> 🖼 サムネ（DDG経由）</label>
-  <label style="font-size:13px;"><input type="checkbox" id="optTree"> 🌲 ツリー表示</label>
+  <label style="font-size:13px;"><input type="checkbox" id="optTree"> 🔗 繋がり表示</label>
 </header>
 <div id="layout">
   <div class="pane" id="boardsPane">
@@ -206,19 +209,24 @@
   const optTree = $('optTree');
   optTree.checked = localStorage.getItem('bbsr_tree') !== '0';
   optTree.addEventListener('change', () => { localStorage.setItem('bbsr_tree', optTree.checked ? '1' : '0'); if (curThread) { const [h, b, k] = curThread.split('/'); openThread(h, b, k); } });
-  function treeDepths(posts) {
-    // 最初の >>アンカー（自分より前）を親とみなす簡易ツリー
-    const depth = new Map();
+  function relationsOf(posts) {
+    // 番号順のまま、>>アンカーの繋がり（親＝返信先／子＝返信してきたレス）を集める
+    const parents = new Map(), children = new Map();
+    const nums = new Set(posts.map(p => p.num));
     for (const p of posts) {
-      let d = 0;
-      const m = String(p.body || '').match(/[>＞]{2}(\d+)/);
-      if (m) {
-        const parent = parseInt(m[1], 10);
-        if (parent >= 1 && parent < p.num && depth.has(parent)) d = depth.get(parent) + 1;
+      const set = new Set();
+      for (const m of String(p.body || '').matchAll(/[>＞]{2}(\d+)/g)) {
+        const n = parseInt(m[1], 10);
+        if (n >= 1 && n < p.num && nums.has(n)) set.add(n);
       }
-      depth.set(p.num, Math.min(d, 8));
+      const ps = [...set];
+      if (ps.length) parents.set(p.num, ps);
+      for (const n of ps) {
+        if (!children.has(n)) children.set(n, []);
+        children.get(n).push(p.num);
+      }
     }
-    return depth;
+    return { parents, children };
   }
 
   function ddgImageProxy(u) {
@@ -289,17 +297,27 @@
       // ID出現回数を数える
       const idCount = {};
       data.posts.forEach(p => { if (p.id) idCount[p.id] = (idCount[p.id] || 0) + 1; });
-      const depths = optTree.checked ? treeDepths(data.posts) : new Map();
+      const rels = optTree.checked ? relationsOf(data.posts) : { parents: new Map(), children: new Map() };
       for (const p of data.posts) {
         if (hasNew && p.num === known + 1) html += '<div class="newLine" id="newLine">―― ここから新しいレス ――</div>';
-        const dep = Math.min(depths.get(p.num) || 0, 2);  // 深い鎖でも最大2段まで（ズレて見えるのを防ぐ）
-        html += '<div class="post' + (dep > 0 ? ' child' : '') + (p.num > known && known > 0 ? ' newpost' : '') + '" id="post' + p.num + '" data-id="' + esc(p.id) + '"'
-          + (dep > 0 ? ' style="margin-left:' + (dep * 18) + 'px"' : '') + '>'
+        let relsHtml = '';
+        if (optTree.checked) {
+          const ps = rels.parents.get(p.num) || [];
+          const cs = rels.children.get(p.num) || [];
+          if (ps.length || cs.length) {
+            relsHtml = '<div class="rels">'
+              + ps.map(n => '<a class="relchip" href="#" data-anchor="' + n + '">↩ >>' + n + ' へ返信</a>').join('')
+              + cs.slice(0, 10).map(n => '<a class="relchip" href="#" data-anchor="' + n + '">↪ ' + n + ' から返信</a>').join('')
+              + (cs.length > 10 ? '<span>…他' + (cs.length - 10) + '件</span>' : '')
+              + '</div>';
+          }
+        }
+        html += '<div class="post' + (p.num > known && known > 0 ? ' newpost' : '') + '" id="post' + p.num + '" data-id="' + esc(p.id) + '">'
           + '<div class="head"><span class="num">' + p.num + '</span> '
           + '<span class="name">' + esc(p.name) + '</span> '
           + esc(p.date)
           + (p.id ? ' <span class="id" data-hlid="' + esc(p.id) + '">ID:' + esc(p.id) + (idCount[p.id] > 1 ? ' (' + idCount[p.id] + ')' : '') + '</span>' : '')
-          + '</div><div class="body">' + renderBody(p.body) + '</div></div>';
+          + '</div>' + relsHtml + '<div class="body">' + renderBody(p.body) + '</div></div>';
       }
       // 既読ラインを最新まで進める（次回はこの先が「新しいレス」になる）
       lastReadMap[curThread] = maxNum;
