@@ -53,7 +53,7 @@
 <body>
 <header>
   <span class="appTitle">📖 専用ブラウザ</span>
-  <input type="text" id="urlInput" placeholder="スレURLを貼り付け（例：https://asahi.5ch.io/newsplus/test/read.cgi/newsplus/1794…/）">
+  <input type="text" id="urlInput" placeholder="スレURLを貼り付け（例：https://asahi.5ch.io/test/read.cgi/newsplus/1794…/）">
   <button id="openUrlBtn">開く</button>
   <button class="mini" id="fontDown">A-</button>
   <button class="mini" id="fontUp">A+</button>
@@ -219,12 +219,16 @@
 
   // ---------- URL貼り付け ----------
   function openFromUrl() {
-    const v = $('urlInput').value.trim();
-    const m = v.match(/https?:\/\/([^/]+)\/([^/]+)\/test\/read\.cgi\/[^/]+\/(\d{9,10})/) ||
-              v.match(/https?:\/\/([^/]+)\/([^/]+)\/dat\/(\d{9,10})\.dat/);
-    if (!m) { alert('対応するURLの形式じゃないみたいです（read.cgi のスレURLを貼ってください）'); return; }
-    curBoard = { host: m[1], board: m[2], name: m[2] };
-    openThread(m[1], m[2], m[3]);
+    let v = $('urlInput').value.trim();
+    if (v && !/^https?:\/\//i.test(v)) v = 'https://' + v;  // スキーム無しの貼り付けも許容
+    let host = '';
+    try { host = new URL(v).hostname; } catch (e) {}
+    const m = v.match(/\/test\/read\.cgi\/([A-Za-z0-9_]+)\/(\d{6,})/) ||          // read.cgi（板名1回・2回どちらの形でも）
+              v.match(/\/([A-Za-z0-9_]+)\/kako\/(?:\d+\/\d+\/)?(\d{6,})\.dat/) || // 過去ログ .dat 直URL
+              v.match(/\/([A-Za-z0-9_]+)\/dat\/(\d{6,})\.dat/);                    // 現行 .dat 直URL
+    if (!m || !host) { alert('対応するURLの形式じゃないみたいです（read.cgi のスレURLか、kako の .dat URLを貼ってください）'); return; }
+    curBoard = { host: host, board: m[1], name: m[1] };
+    openThread(host, m[1], m[2]);
   }
   $('openUrlBtn').onclick = openFromUrl;
   $('urlInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') openFromUrl(); });
